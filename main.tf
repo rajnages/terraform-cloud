@@ -14,58 +14,77 @@ provider "aws" {
   region = var.region_name
 }
 
+# VPC Creation
 resource "aws_vpc" "terraform_vpc" {
   cidr_block           = var.vpc_cidr_block
-  enable_dns_hostnames = true
   enable_dns_support   = true
-  tags                 = merge(local.common_tags, { Name = "${var.environment}-VPC" })
+  enable_dns_hostnames = true
+  tags = {
+    Name = local.vpc_name
+  }
 }
 
+# Internet Gateway for Public Subnets
 resource "aws_internet_gateway" "terraform_igw" {
   vpc_id = aws_vpc.terraform_vpc.id
-  tags   = merge(local.common_tags, { Name = "${var.environment}-IGW" })
+  tags = {
+    Name = local.igw_name
+  }
 }
 
-# Subnet Configuration (Public & Private)
-resource "aws_subnet" "subnet" {
-  for_each = merge(
-    { for idx, cidr in var.subnets.public : "public-${idx}" => cidr },
-    { for idx, cidr in var.subnets.private : "private-${idx}" => cidr }
-  )
+# Subnet Creation for Public and Private Subnets
+resource "aws_subnet" "all_subnets" {
+  for_each = {
+    for idx, cidr in concat(
+      var.public_subnet_cidr_block,
+      var.private_subnet_cidr_block
+    ) : idx => {
+      cidr_block        = cidr
+      type              = idx < length(var.public_subnet_cidr_block) ? "public" : "private"
+      availability_zone = element(var.availability_zones, idx % length(var.availability_zones))
+    }
+  }
 
   vpc_id            = aws_vpc.terraform_vpc.id
-  cidr_block        = each.value
-  availability_zone = var.availability_zones[each.key == "public-0" ? 0 : 1] # Assuming two AZs for simplicity  map_public_ip_on_launch = each.key == "public" ? true : false
-  tags = {
-    Name = "${each.key}-subnet-${substr(each.key, 0, 1)}"
+  cidr_block        = each.value.cidr_block
+  availability_zone = each.value.availability_zone
+  map_public_ip_on_launch = each.value.type == "public" ? true : false
+
+ tags = {
+    Name = "${var.project_name}-${each.value.type}-subnet-${each.key + 1}"  # Dynamic Name without format
+    Type = each.value.type
   }
 }
 
-# Route Table Configuration (Public & Private)
-resource "aws_route_table" "subnet_rt" {
-  for_each = {
-    public  = aws_internet_gateway.terraform_igw.id
-    private = null
-  }
-
+# Public Route Table
+resource "aws_route_table" "terraform_public_rt" {
   vpc_id = aws_vpc.terraform_vpc.id
 
   route {
     cidr_block = "0.0.0.0/0"
-    gateway_id = each.key == "public" ? each.value : null
+    gateway_id = aws_internet_gateway.terraform_igw.id
   }
 
-  tags = merge(local.common_tags, {
-    Name = "${var.environment}-${each.key}-RT"
-  })
+  tags = {
+    Name = local.public_route_table_name
+  }
 }
 
-# Route Table Associations (Public & Private Subnets)
-resource "aws_route_table_association" "subnet_association" {
-  for_each = {
-    for subnet_key, subnet in aws_subnet.subnet : subnet_key => subnet
-  }
+# Private Route Table
+resource "aws_route_table" "terraform_private_rt" {
+  vpc_id = aws_vpc.terraform_vpc.id
 
-  subnet_id      = each.value.id
-  route_table_id = aws_route_table.subnet_rt[substr(each.key, 0, 1)].id
+  tags = {
+    Name = local.private_route_table_name
+  }
+}
+
+# Route Table Associations for Public and Private Subnets
+resource "aws_route_table_association" "all_rt_associations" {
+  for_each = aws_subnet.all_subnets
+
+  subnet_id = each.value.id
+
+  # Use 'Type' from the subnet configuration to choose route table
+  route_table_id = each.value.tags["Type"] == "public" ? aws_route_table.terraform_public_rt.id : aws_route_table.terraform_private_rt.id
 }
