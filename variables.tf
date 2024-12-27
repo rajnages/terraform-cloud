@@ -39,6 +39,6 @@ variable "subnets" {
 
 variable "availability_zones" {
   description = "The availability zones to deploy the subnets"
-  type        = list(string)
+  type        = list(string())
   default     = ["us-east-1a", "us-east-1b"]
 }

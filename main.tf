@@ -33,10 +33,9 @@ resource "aws_subnet" "subnet" {
     { for idx, cidr in var.subnets.private : "private-${idx}" => cidr }
   )
 
-  vpc_id                  = aws_vpc.terraform_vpc.id
-  cidr_block              = each.value
-  availability_zone       = var.availability_zones[substr(each.key, 0, 1)]  # Extract first part (public/private) for AZ
-  map_public_ip_on_launch = each.key == "public" ? true : false
+  vpc_id            = aws_vpc.terraform_vpc.id
+  cidr_block        = each.value
+  availability_zone = var.availability_zones[each.key == "public-0" ? 0 : 1] # Assuming two AZs for simplicity  map_public_ip_on_launch = each.key == "public" ? true : false
   tags = {
     Name = "${each.key}-subnet-${substr(each.key, 0, 1)}"
   }
